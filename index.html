@@ -109,6 +109,15 @@ table.utt thead th { position: sticky; top: 0; z-index: 2; background: var(--sur
 table.utt th.pos { position: sticky; left: 0; z-index: 1; background: var(--surface-2); font-weight: 700;
   padding: 0 8px; border-right: 1px solid var(--border); min-width: 48px; text-align: center; }
 table.utt thead th.pos { z-index: 3; }
+button.axis-btn { min-height: 0; width: 100%; padding: 6px 4px; border: 0; border-radius: 6px; background: transparent; color: inherit; font: inherit; font-weight: 700; cursor: pointer; }
+button.axis-btn:hover, button.axis-btn[aria-expanded="true"] { background: var(--accent-soft); color: var(--accent); }
+.axis-menu { position: fixed; z-index: 60; min-width: 210px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 10px 28px rgba(0,0,0,.25); padding: 6px; display: flex; flex-direction: column; }
+.axis-menu h3 { margin: 4px 8px 6px; font-size: .85rem; color: var(--muted); }
+.axis-menu button { border: 0; background: transparent; text-align: left; font-weight: 500; min-height: 42px; }
+.axis-menu button:hover { background: var(--accent-soft); }
+.axis-menu button.danger { color: var(--danger); }
+.grid-tip { margin: 6px 0 0; font-size: .82rem; }
 table.utt td { padding: 2px; border-bottom: 1px solid var(--border); }
 input.cell { width: 64px; min-height: 40px; padding: 6px 4px; text-align: center; border-radius: 6px; font-variant-numeric: tabular-nums; }
 .cell.filled { background: var(--accent-soft); }
@@ -276,9 +285,6 @@ body.v3-open { overflow: hidden; }
 .view3d .legend { color: #b8c2ba; }
 .view3d .sw { border-color: #3a443b; }
 .v3-controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
-.v3-depth { display: flex; align-items: center; gap: 8px; flex: 1 1 240px; font-size: .9rem; }
-.v3-depth input { flex: 1; min-height: 0; padding: 0; border: 0; background: transparent; accent-color: #5cb860; }
-.v3-depth span { min-width: 92px; color: #b8c2ba; }
 .view3d button { background: #252d27; color: #e6ebe6; border-color: #3a443b; }
 .view3d button.primary { background: #5cb860; color: #08130a; border-color: #5cb860; }
 </style>
@@ -327,8 +333,14 @@ body.v3-open { overflow: hidden; }
         <input id="f-axial" data-field="axial" inputmode="decimal" autocomplete="off"></label>
       <label class="f grid-only">Circ. start (clock)
         <input id="f-circ" data-field="circ" placeholder="12:00" autocomplete="off"></label>
+      <label class="f grid-only">Rows run
+        <select id="f-circDir" data-field="circDir"><option value="cw">Clockwise</option><option value="ccw">Counter-clockwise</option></select></label>
       <label class="f grid-only">Length (in)
-        <input id="f-length" data-field="length" inputmode="numeric" autocomplete="off"></label>
+        <input id="f-length" data-field="length" inputmode="decimal" autocomplete="off"></label>
+      <label class="f grid-only" title="Spacing between rows, measured around the circumference">Circ. increment (in)
+        <input id="f-incCirc" data-field="incCirc" inputmode="decimal" placeholder="1" autocomplete="off"></label>
+      <label class="f grid-only" title="Spacing between columns, measured along the pipe or fitting">Axial increment (in)
+        <input id="f-incAx" data-field="incAx" inputmode="decimal" placeholder="1" autocomplete="off"></label>
     </div>
     <div class="fields feature-fields">
       <label class="f">Feature
@@ -397,6 +409,7 @@ body.v3-open { overflow: hidden; }
     </div>
     <p id="gridHint" class="muted"></p>
     <div id="gridWrap" class="grid-wrap" hidden></div>
+    <p id="gridTip" class="muted grid-tip fs-hide" hidden>Tap a row letter or column number to insert or delete a row or column.</p>
     <div id="legend" class="legend" hidden>
       <span class="heat-key"><i class="sw" style="background:var(--h-ok)"></i>≥95% nominal</span>
       <span class="heat-key"><i class="sw" style="background:var(--h-yellow)"></i>90–95%</span>
@@ -502,7 +515,6 @@ body.v3-open { overflow: hidden; }
       <span><i class="sw" style="background:#5f6b62"></i>No reading</span>
     </div>
     <div class="v3-controls">
-      <label class="v3-depth">Dent depth <input type="range" id="v3Depth" min="0" max="5" step="1" value="0" aria-label="Dent depth exaggeration"><span id="v3DepthVal">1× (true scale)</span></label>
       <button type="button" id="v3Reset" class="small">Reset view</button>
       <button type="button" id="v3Save" class="small primary">Save image</button>
     </div>
@@ -518,6 +530,7 @@ body.v3-open { overflow: hidden; }
   <button type="button" data-nav="next" class="primary next">Next ↵</button>
   <button type="button" data-nav="done" aria-label="Done">✓</button>
 </div>
+<div class="axis-menu" id="axisMenu" role="menu" hidden></div>
 <div class="toasts" id="toasts"></div>
 <input type="file" id="importFile" accept=".json,application/json" hidden>
 
@@ -539,7 +552,7 @@ const SESSION_KEYS = ['inspector','instrument','serial','calIn','calOut','veloci
 // Feature (component) geometry used by the 3D view. Stored with each record; blank = default.
 const FEATURES = { pipe: 'Pipe', elbow: 'Elbow / bend', reducer: 'Reducer', tee: 'Tee – run', neck: 'Tee – neck', cap: 'Cap' };
 const FT_DEFAULTS = { feature: 'pipe', ftAngle: '', ftBendR: '', ftExtrados: '12:00', ftSmallOd: '', ftLen: '', ftRedType: 'concentric',
-  ftFlat: '6:00', ftBranchOd: '', ftRunOd: '', ftBranchAt: '12:00', ftRunLen: '', ftNeckLen: '', ftHead: 'ellipse', ftFlange: '', ftStart: '' };
+  ftFlat: '6:00', ftBranchOd: '', ftRunOd: '', ftBranchAt: '12:00', ftRunLen: '', ftNeckLen: '', ftHead: 'ellipse', ftFlange: '', ftStart: '', circDir: 'cw', incCirc: '', incAx: '' };
 const FT_KEYS = Object.keys(FT_DEFAULTS);
 const $ = id => document.getElementById(id);
 
@@ -566,7 +579,10 @@ function labelIndex(lb) {
   for (const ch of lb) n = n * 26 + (ch.charCodeAt(0) - 64);
   return n - 1;
 }
-const gridRowsFor = od => { const d = num(od); return d > 0 ? Math.ceil(Math.PI * d) : 0; };
+// Grid spacing in inches (blank = 1"). Rows cover the circumference, columns the length.
+const incOf = v => { const n = num(v); return n > 0 ? n : 1; };
+const gridRowsFor = (od, inc) => { const d = num(od); return d > 0 ? Math.ceil(Math.PI * d / incOf(inc) - 1e-9) : 0; };
+const gridColsFor = (len, inc) => { const L = num(len); return L > 0 ? Math.ceil(L / incOf(inc) - 1e-9) : 0; };
 function uid() {
   if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
@@ -807,7 +823,7 @@ function blankState(mode) {
     id: null, loadedMode: null, mode: mode || 'grid',
     joint: '', od: '', units: 'mils', nwt: '', axial: '', circ: '', length: '', ...FT_DEFAULTS,
     inspector: '', instrument: '', serial: '', calIn: '', calOut: '', velocity: '', gain: '', range: '', comments: '',
-    gridReadings: {}, gridRows: 0, gridCols: 0, ptReadings: {}, gridNotes: {}, ptNotes: {}, prompted: {},
+    gridReadings: {}, gridRows: 0, gridCols: 0, gridManual: false, ptReadings: {}, gridNotes: {}, ptNotes: {}, prompted: {},
     createdAt: null, updatedAt: null, unitsReview: false, legacy: false, legacyTimestamp: '', migrationNote: ''
   };
 }
@@ -824,7 +840,7 @@ function toRecord(s) {
   FIELD_KEYS.forEach(k => { r[k] = typeof s[k] === 'string' ? s[k].trim() : s[k]; });
   Object.assign(r, { createdAt: s.createdAt, updatedAt: s.updatedAt, unitsReview: s.unitsReview,
     legacy: s.legacy, legacyTimestamp: s.legacyTimestamp, migrationNote: s.migrationNote });
-  if (s.mode === 'grid') Object.assign(r, { rows: s.gridRows, cols: s.gridCols, readings: clone(s.gridReadings) });
+  if (s.mode === 'grid') Object.assign(r, { rows: s.gridRows, cols: s.gridCols, gridManual: !!s.gridManual, readings: clone(s.gridReadings) });
   else { delete r.circ; delete r.length; r.readings = clone(s.ptReadings); }
   r.notes = validNotes(r.mode, r.readings, s.mode === 'grid' ? s.gridNotes : s.ptNotes);
   return r;
@@ -839,9 +855,10 @@ function fromRecord(r) {
     unitsReview: !!r.unitsReview, legacy: !!r.legacy, legacyTimestamp: r.legacyTimestamp || '', migrationNote: r.migrationNote || '' });
   if (r.mode === 'grid') {
     s.gridReadings = clone(r.readings || {});
-    s.gridRows = r.rows || gridRowsFor(r.od);
-    s.gridCols = r.cols || parseInt(r.length, 10) || 0;
+    s.gridRows = r.rows || gridRowsFor(r.od, r.incCirc);
+    s.gridCols = r.cols || gridColsFor(r.length, r.incAx);
     s.gridNotes = clone(r.notes || {});
+    s.gridManual = !!r.gridManual;
   } else { s.ptReadings = clone(r.readings || {}); s.ptNotes = clone(r.notes || {}); }
   return s;
 }
@@ -937,7 +954,7 @@ function fillForm() {
 }
 
 /* ======================= Grid ======================= */
-function gridTargetDims() { return { rows: gridRowsFor(state.od), cols: parseInt(state.length, 10) || 0 }; }
+function gridTargetDims() { return { rows: gridRowsFor(state.od, state.incCirc), cols: gridColsFor(state.length, state.incAx) }; }
 
 function updateGridHint() {
   const { rows, cols } = gridTargetDims();
@@ -945,12 +962,16 @@ function updateGridHint() {
   if (!state.gridRows) {
     btn.textContent = 'Build grid'; btn.classList.add('primary');
     hint.textContent = rows && cols
-      ? `Grid will be ${rows} rows (A–${rowLabel(rows - 1)}, one per inch of circumference) × ${cols} columns.`
+      ? `Grid will be ${rows} rows (A–${rowLabel(rows - 1)}, every ${incOf(state.incCirc)}" around) × ${cols} columns (every ${incOf(state.incAx)}" along).`
       : 'Choose the OD and enter a length, then build the grid.';
+    hint.hidden = false;
+  } else if (state.gridManual && cols === state.gridCols) {
+    btn.textContent = 'Rebuild grid'; btn.classList.remove('primary');
+    hint.textContent = `Rows edited by hand: ${state.gridRows} rows (A–${rowLabel(state.gridRows - 1)}). Rebuild grid resets to ${rows} rows from the OD and increment.`;
     hint.hidden = false;
   } else if (rows && cols && (rows !== state.gridRows || cols !== state.gridCols)) {
     btn.textContent = 'Rebuild grid'; btn.classList.add('primary');
-    hint.textContent = `OD or length changed. Tap Rebuild grid to resize to ${rows} × ${cols}; readings are kept where they fit.`;
+    hint.textContent = `OD, length or increment changed. Tap Rebuild grid to resize to ${rows} × ${cols}; readings are kept where they fit.`;
     hint.hidden = false;
   } else {
     btn.textContent = 'Rebuild grid'; btn.classList.remove('primary');
@@ -973,7 +994,7 @@ function buildGrid() {
     }
   }
   const changed = rows !== state.gridRows || cols !== state.gridCols;
-  state.gridRows = rows; state.gridCols = cols;
+  state.gridRows = rows; state.gridCols = cols; state.gridManual = false;
   renderGrid(); updateGridHint(); updateSummary();
   if (changed || drop) markDirty();
   if (isNarrow()) setSetup(true);
@@ -982,14 +1003,14 @@ function buildGrid() {
 
 function renderGrid() {
   const wrap = $('gridWrap');
-  if (!state.gridRows || !state.gridCols) { wrap.innerHTML = ''; wrap.hidden = true; $('legend').hidden = true; $('fullBtn').hidden = true; $('view3dBtn').hidden = true; setFull(false); return; }
+  if (!state.gridRows || !state.gridCols) { wrap.innerHTML = ''; wrap.hidden = true; $('legend').hidden = true; $('gridTip').hidden = true; $('fullBtn').hidden = true; $('view3dBtn').hidden = true; setFull(false); return; }
   const u = state.units, nIn = nwtInOf(state), R = state.gridRows, C = state.gridCols;
   const parts = ['<table class="utt"><thead><tr><th class="pos" scope="col">Pos</th>'];
-  for (let c = 1; c <= C; c++) parts.push(`<th scope="col">${c}</th>`);
+  for (let c = 1; c <= C; c++) parts.push(`<th scope="col"><button type="button" class="axis-btn" data-axis="col" data-i="${c}" aria-haspopup="true" aria-label="Column ${c} options">${c}</button></th>`);
   parts.push('</tr></thead><tbody>');
   for (let r = 0; r < R; r++) {
     const lb = rowLabel(r), row = state.gridReadings[lb] || {};
-    parts.push(`<tr><th class="pos" scope="row">${lb}</th>`);
+    parts.push(`<tr><th class="pos" scope="row"><button type="button" class="axis-btn" data-axis="row" data-i="${r}" aria-haspopup="true" aria-label="Row ${lb} options">${lb}</button></th>`);
     for (let c = 1; c <= C; c++) {
       const v = row[c], has = typeof v === 'number';
       parts.push(`<td><input class="${cellClass(has ? v : null, u, nIn, 'grid', lb + c)}" id="g-${r}-${c}" data-r="${r}" data-c="${c}" value="${has ? v : ''}" inputmode="decimal" enterkeyhint="next" autocomplete="off" aria-label="${lb}${c}"></td>`);
@@ -998,8 +1019,122 @@ function renderGrid() {
   }
   parts.push('</tbody></table>');
   wrap.innerHTML = parts.join('');
-  wrap.hidden = false; $('legend').hidden = false; $('fullBtn').hidden = false; $('view3dBtn').hidden = false;
+  wrap.hidden = false; $('legend').hidden = false; $('gridTip').hidden = false; $('fullBtn').hidden = false; $('view3dBtn').hidden = false;
   if (document.body.classList.contains('fullgrid')) $('fsJoint').textContent = state.joint ? '· ' + state.joint : '';
+}
+
+/* ======================= Insert / delete rows and columns ======================= */
+// Rebuild readings and notes through a mapping of old → new row index and column number (−1 = removed).
+function remapGrid(rowMap, colMap, rows, cols) {
+  const readings = {}, notes = {};
+  for (const lb in state.gridReadings) {
+    const r2 = rowMap(labelIndex(lb)); if (r2 < 0) continue;
+    for (const c in state.gridReadings[lb]) {
+      const c2 = colMap(+c); if (c2 < 1) continue;
+      (readings[rowLabel(r2)] = readings[rowLabel(r2)] || {})[c2] = state.gridReadings[lb][c];
+    }
+  }
+  for (const loc in state.gridNotes) {
+    const m = loc.match(/^([A-Z]+)(\d+)$/); if (!m) continue;
+    const r2 = rowMap(labelIndex(m[1])), c2 = colMap(+m[2]);
+    if (r2 >= 0 && c2 >= 1) notes[rowLabel(r2) + c2] = state.gridNotes[loc];
+  }
+  state.gridReadings = readings; state.gridNotes = notes; state.prompted = {};
+  state.gridRows = rows; state.gridCols = cols;
+}
+function axisCount(axis, i) {
+  let n = 0;
+  if (axis === 'row') { const row = state.gridReadings[rowLabel(i)] || {}; n = Object.keys(row).length; }
+  else for (const lb in state.gridReadings) if (typeof state.gridReadings[lb][i] === 'number') n++;
+  return n;
+}
+function editAxis(axis, op, i) {
+  const snap = { readings: clone(state.gridReadings), notes: clone(state.gridNotes), rows: state.gridRows, cols: state.gridCols,
+    length: state.length, manual: state.gridManual };
+  const R = state.gridRows, C = state.gridCols, ia = incOf(state.incAx);
+  let msg, focusId;
+  if (axis === 'row') {
+    const lb = rowLabel(i);
+    if (op === 'delete') {
+      if (R <= 1) { toast('A grid needs at least one row.', 'warn'); return; }
+      const n = axisCount('row', i);
+      if (n && !confirm(`Delete row ${lb}? Its ${n} reading(s) will be removed and the rows below move up one letter.`)) return;
+      remapGrid(r => r === i ? -1 : r > i ? r - 1 : r, c => c, R - 1, C);
+      msg = `Row ${lb} deleted.`; focusId = `g-${Math.min(i, R - 2)}-1`;
+    } else {
+      if (R >= 1000) { toast('That is the maximum number of rows.', 'warn'); return; }
+      const at = op === 'before' ? i : i + 1;
+      remapGrid(r => r >= at ? r + 1 : r, c => c, R + 1, C);
+      msg = `Row inserted ${op === 'before' ? 'above' : 'below'} ${lb}.`; focusId = `g-${at}-1`;
+    }
+    state.gridManual = true;
+  } else {
+    if (op === 'delete') {
+      if (C <= 1) { toast('A grid needs at least one column.', 'warn'); return; }
+      const n = axisCount('col', i);
+      if (n && !confirm(`Delete column ${i}? Its ${n} reading(s) will be removed and the columns after it move left.`)) return;
+      remapGrid(r => r, c => c === i ? -1 : c > i ? c - 1 : c, R, C - 1);
+      msg = `Column ${i} deleted.`; focusId = `g-0-${Math.min(i, C - 1)}`;
+    } else {
+      if (C >= 1000) { toast('That is the maximum number of columns.', 'warn'); return; }
+      const at = op === 'before' ? i : i + 1;
+      remapGrid(r => r, c => c >= at ? c + 1 : c, R, C + 1);
+      msg = `Column inserted ${op === 'before' ? 'before' : 'after'} ${i}.`; focusId = `g-0-${at}`;
+    }
+    // keep the details in step with the grid: length = columns × axial increment
+    state.length = String(Math.round(state.gridCols * ia * 1000) / 1000);
+    const lf = $('f-length'); lf.value = state.length; markFilled(lf);
+  }
+  afterGridEdit();
+  toast(msg, '', { label: 'Undo', fn: () => {
+    Object.assign(state, { gridReadings: snap.readings, gridNotes: snap.notes, gridRows: snap.rows, gridCols: snap.cols, length: snap.length, gridManual: snap.manual, prompted: {} });
+    const lf = $('f-length'); lf.value = state.length; markFilled(lf);
+    afterGridEdit();
+  } });
+  if (focusId && !coarse()) focusCell(focusId);
+}
+function afterGridEdit() {
+  renderGrid(); updateGridHint(); updateSummary(); updateCompactSum(); markDirty();
+}
+function openAxisMenu(btn) {
+  const menu = $('axisMenu'), axis = btn.dataset.axis, i = +btn.dataset.i;
+  const name = axis === 'row' ? `Row ${rowLabel(i)}` : `Column ${i}`;
+  const n = axisCount(axis, i);
+  const items = axis === 'row'
+    ? [['before', `Insert row above ${rowLabel(i)}`], ['after', `Insert row below ${rowLabel(i)}`], ['delete', `Delete row ${rowLabel(i)}`]]
+    : [['before', `Insert column before ${i}`], ['after', `Insert column after ${i}`], ['delete', `Delete column ${i}`]];
+  menu.innerHTML = `<h3>${name} · ${n} reading${n === 1 ? '' : 's'}</h3>` +
+    items.map(([op, t]) => `<button type="button" role="menuitem" data-op="${op}"${op === 'delete' ? ' class="danger"' : ''}>${t}</button>`).join('');
+  menu.dataset.axis = axis; menu.dataset.i = i;
+  closeAxisMenu(); menu.hidden = false; btn.setAttribute('aria-expanded', 'true'); menu._btn = btn;
+  const r = btn.getBoundingClientRect(), mw = menu.offsetWidth, mh = menu.offsetHeight;
+  let x = axis === 'row' ? r.right + 4 : r.left, y = axis === 'row' ? r.top : r.bottom + 4;
+  x = Math.min(Math.max(8, x), window.innerWidth - mw - 8);
+  if (y + mh > window.innerHeight - 8) y = Math.max(8, r.top - mh - 4);
+  menu.style.left = x + 'px'; menu.style.top = y + 'px';
+  menu.querySelector('button').focus({ preventScroll: true });
+}
+function closeAxisMenu() {
+  const menu = $('axisMenu');
+  if (menu._btn) { menu._btn.setAttribute('aria-expanded', 'false'); menu._btn = null; }
+  menu.hidden = true;
+}
+function wireAxisMenu() {
+  $('gridWrap').addEventListener('click', e => {
+    const b = e.target.closest('.axis-btn'); if (!b) return;
+    e.stopPropagation();
+    if (!$('axisMenu').hidden && $('axisMenu')._btn === b) { closeAxisMenu(); return; }
+    openAxisMenu(b);
+  });
+  $('axisMenu').addEventListener('click', e => {
+    const b = e.target.closest('[data-op]'); if (!b) return;
+    const m = $('axisMenu'), axis = m.dataset.axis, i = +m.dataset.i;
+    closeAxisMenu(); editAxis(axis, b.dataset.op, i);
+  });
+  document.addEventListener('click', e => { if (!$('axisMenu').hidden && !e.target.closest('#axisMenu')) closeAxisMenu(); });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('axisMenu').hidden) closeAxisMenu(); });
+  $('gridWrap').addEventListener('scroll', closeAxisMenu, { passive: true });
+  window.addEventListener('resize', closeAxisMenu);
 }
 
 function setReading(obj, key, col, raw) {
@@ -1133,7 +1268,7 @@ const FEATURE_HINTS = {
   elbow: 'Columns run along the bend centerline from the weld; rows go around the cross-section, clockwise looking downstream.',
   reducer: 'Rows follow the large-end circumference and narrow toward the small end. OD above is the large end.',
   tee: 'Grid on the run. Columns run along the run from its end weld; the branch opening is cut out in 3D.',
-  neck: 'Grid on the neck. OD above is the neck OD. Columns run from the run surface (crotch) outward; rows go clockwise looking down into the neck, with 12:00 on the upstream side of the run.',
+  neck: 'Grid on the neck. OD above is the neck OD. Columns run from the run surface (crotch) outward; rows go clockwise looking out along the neck from the run (the same sense as looking downstream on the pipe), starting from 12:00 at top dead center. For a neck pointing straight up or down, 12:00 is the upstream side of the run.',
   cap: 'Columns run from the weld over the head toward the center; rows go around, clockwise looking at the cap from the pipe side.'
 };
 function updateFeatureUI() {
@@ -1156,7 +1291,7 @@ function updateCompactSum() {
   if ((s.feature || 'pipe') !== 'pipe') parts.push(featureDesc(s));
   if (s.od) parts.push(`${s.od}" OD`);
   if (s.nwt) parts.push(`NWT ${s.nwt} ${unitLabel(s.units)}`);
-  if (s.mode === 'grid' && s.gridRows) parts.push(`${s.gridRows}×${s.gridCols} grid`);
+  if (s.mode === 'grid' && s.gridRows) parts.push(`${s.gridRows}×${s.gridCols} grid` + (incOf(s.incCirc) !== 1 || incOf(s.incAx) !== 1 ? ` @ ${incOf(s.incCirc)}" × ${incOf(s.incAx)}"` : ''));
   if (s.mode === 'grid' && s.circ) parts.push(`start ${s.circ}`);
   if (s.inspector) parts.push(s.inspector);
   if (s.calIn) parts.push(`cal in ${s.calIn}`);
@@ -1411,7 +1546,8 @@ function wireReview() {
 
 /* ======================= 3D view ======================= */
 const V3_COLORS = { 'h-ok': 0x43a047, 'h-yellow': 0xfdd835, 'h-amber': 0xfb8c00, 'h-red': 0xe53935, 'h-over': 0x8e6cf0, plain: 0x26a69a, empty: 0x5f6b62 };
-const DEPTH_STEPS = [1, 2, 5, 10, 20, 50];
+// UT gives remaining wall, not surface shape: parts are always drawn round at their true OD and
+// thickness is shown by color only (no surface relief, which would read as a dent).
 let v3 = null, threeLoading = null;
 
 // Load the 3D engine: the copy uploaded next to index.html first, then a public CDN copy (cached for offline).
@@ -1469,7 +1605,9 @@ function v3Model() {
 function v3Shape(M) {
   const s = state, f = s.feature || 'pipe', n = v => num(v);
   const R = n(s.od) / 2, parts = {}, info = { feature: f, refR: R };
-  const len = Math.max(0.5, M.mode === 'grid' ? M.cols : clamp(R * 0.4, 1, 4));
+  const ic = incOf(s.incCirc), ia = incOf(s.incAx);
+  info.ic = ic; info.ia = ia;
+  const len = Math.max(0.5, M.mode === 'grid' ? M.cols * ia : clamp(R * 0.4, 1, 4));
   const start = f === 'pipe' ? 0 : Math.max(0, n(s.ftStart) || 0);
   const gridEnd = start + len;
   const straight = (s0, s1) => ({ s0, s1, pos: (sv, a, i) => [sv, (R - i) * Math.cos(a), (R - i) * Math.sin(a)] });
@@ -1499,19 +1637,24 @@ function v3Shape(M) {
     const Rrun = neck ? Math.max(R * 1.001, n(s.ftRunOd) / 2 || R * 2) : R;
     const Rbr = neck ? R : Math.min(R * 0.999, (n(s.ftBranchOd) > 0 ? n(s.ftBranchOd) : 2 * R) / 2);
     const eB = clockDir(clockAngle(s.ftBranchAt || '12:00'));
-    const eR = vcross(eB, [1, 0, 0]);                      // neck clock: 12:00 = upstream (−X), clockwise looking down into the neck
+    const eP = vcross(eB, [1, 0, 0]);                      // across the run, perpendicular to the neck (for the saddle shape)
+    // Neck clock: 12:00 = top dead center (straight up, projected onto the neck). For a neck standing straight
+    // up or down, TDC is undefined, so 12:00 = upstream side of the run.
+    let eU = vsub([0, 1, 0], vmul(eB, eB[1]));
+    eU = vlen(eU) > 0.2 ? vnorm(eU) : [-1, 0, 0];
+    const eRt = vcross(eB, eU);                           // clockwise looking out along the neck, from the run
     const runLen = n(s.ftRunLen) > 0 ? n(s.ftRunLen) : Math.max(3 * Rrun, 4.4 * Rbr, neck ? 0 : gridEnd);
     const O = [runLen / 2, 0, 0];
     const brLen = n(s.ftNeckLen) > 0 ? n(s.ftNeckLen) : Math.max(Rbr * 1.3, Rrun * 0.6, neck ? gridEnd : 0);
     const run = { s0: 0, s1: runLen, pos: (sv, a, i) => [sv, (Rrun - i) * Math.cos(a), (Rrun - i) * Math.sin(a)],
       hole: p => { const v = vsub(p, O), al = vdot(v, eB); return al > 0 && vdot(v, v) - al * al < (Rbr * 0.995) ** 2; } };
     const branch = { s0: 0, s1: brLen, pos: (sv, a, i) => {
-      const w = vadd(vmul([-1, 0, 0], Math.cos(a)), vmul(eR, Math.sin(a)));
-      const h0 = Math.sqrt(Math.max(0, Rrun * Rrun - (Rbr * vdot(w, eR)) ** 2));   // saddle: where the neck meets the run
+      const w = vadd(vmul(eU, Math.cos(a)), vmul(eRt, Math.sin(a)));
+      const h0 = Math.sqrt(Math.max(0, Rrun * Rrun - (Rbr * vdot(w, eP)) ** 2));   // saddle: where the neck meets the run
       return vadd(vadd(O, vmul(eB, h0 + sv)), vmul(w, Rbr - i));
     } };
     if (neck) { parts.main = branch; parts.ctx = [run]; } else { parts.main = run; parts.ctx = [branch]; }
-    info.refR = neck ? Rbr : Rrun; info.neck = neck;
+    info.refR = neck ? Rbr : Rrun; info.neck = neck; info.eB = eB;
   } else if (f === 'cap') {
     const h = s.ftHead === 'hemi' ? R : R / 2, sf = n(s.ftFlange) > 0 ? n(s.ftFlange) : 1.5;
     const N = 400, tab = [0];
@@ -1531,8 +1674,8 @@ function v3Shape(M) {
   // Where the readings sit on the part.
   const refR = info.refR;
   if (M.mode === 'grid') {
-    const span = Math.min(TAU, M.rows / refR);              // 1" rows at the reference circumference
-    info.aA = clockAngle(s.circ); info.aB = info.aA + span; info.full = span >= TAU - 1e-6;
+    const span = Math.min(TAU, M.rows * ic / refR);         // rows every ic inches at the reference circumference
+    info.aA = clockAngle(s.circ); info.aB = info.aA + (s.circDir === 'ccw' ? -span : span); info.full = span >= TAU - 1e-6;
   } else {
     info.aA = -Math.PI / 12; info.aB = info.aA + TAU; info.full = true;   // each clock position centred on its hour
   }
@@ -1582,6 +1725,12 @@ function v3Draw() {
   const sp = Math.sin(v3.phi), t = v3.target;
   v3.camera.position.set(t.x + v3.dist * sp * Math.sin(v3.theta), t.y + v3.dist * Math.cos(v3.phi), t.z + v3.dist * sp * Math.cos(v3.theta));
   v3.camera.lookAt(t);
+  v3.scene.updateMatrixWorld();
+  const cam = v3.content.worldToLocal(v3.camera.position.clone());
+  for (const o of v3.content.children) {
+    const n = o.userData && o.userData.nrm;
+    if (n) o.visible = n[0] * (cam.x - o.position.x) + n[1] * (cam.y - o.position.y) + n[2] * (cam.z - o.position.z) > 0;
+  }
   v3.renderer.render(v3.scene, v3.camera);
 }
 function v3Resize() {
@@ -1642,15 +1791,16 @@ function v3Build() {
   v3.pick = null;
   const M = v3Model();
   const { parts, info } = v3Shape(M), part = parts.main;
-  const k = DEPTH_STEPS[+$('v3Depth').value] || 1;
-  // Wall loss per cell (inches), sampled bilinearly so dents form a smooth surface.
+  const k = 0;
+  // Thickness relief per cell (inches below nominal; negative = thicker than nominal), sampled bilinearly.
   const loss = new Float32Array(M.rows * M.cols);
-  for (let r = 0; r < M.rows; r++) for (let c = 0; c < M.cols; c++) { const v = M.val(r, c); loss[r * M.cols + c] = v != null && M.nIn > 0 ? Math.max(0, M.nIn - toIn(v, M.u)) : 0; }
+  for (let r = 0; r < M.rows; r++) for (let c = 0; c < M.cols; c++) { const v = M.val(r, c); loss[r * M.cols + c] = v != null && M.nIn > 0 ? M.nIn - toIn(v, M.u) : 0; }
   const lossAt = (u, v) => {
     if (k === 0 || !(M.nIn > 0)) return 0;
     const y = v * M.rows - 0.5, x = u * M.cols - 0.5, y0 = Math.floor(y), x0 = Math.floor(x), fy = y - y0, fx = x - x0;
     const at = (i, j) => { i = info.full ? ((i % M.rows) + M.rows) % M.rows : clamp(i, 0, M.rows - 1); j = clamp(j, 0, M.cols - 1); return loss[i * M.cols + j]; };
-    return k * ((at(y0, x0) * (1 - fx) + at(y0, x0 + 1) * fx) * (1 - fy) + (at(y0 + 1, x0) * (1 - fx) + at(y0 + 1, x0 + 1) * fx) * fy);
+    const d = k * ((at(y0, x0) * (1 - fx) + at(y0, x0 + 1) * fx) * (1 - fy) + (at(y0 + 1, x0) * (1 - fx) + at(y0 + 1, x0 + 1) * fx) * fy);
+    return clamp(d, -info.refR * 0.3, info.refR * 0.8);
   };
   const curved = info.feature === 'elbow' || info.feature === 'cap';
   const nu = Math.min(400, Math.max(M.cols * (M.cols < 12 ? Math.ceil(12 / M.cols) : 1), curved ? 48 : 4, info.feature === 'tee' ? 160 : 0));
@@ -1664,27 +1814,38 @@ function v3Build() {
   // The whole feature, faint, for context.
   let gmn = [Infinity, Infinity, Infinity], gmx = [-Infinity, -Infinity, -Infinity];
   [part].concat(parts.ctx || []).forEach((gp, gi) => {
-    const gs = v3Surface(gp, { sA: gp.s0, sB: gp.s1, aA: 0, aB: TAU, nu: curved ? 64 : 16, nv: 96, inset: gi === 0 ? () => info.refR * 0.004 : null, cut: true });
+    const gs = v3Surface(gp, { sA: gp.s0, sB: gp.s1, aA: 0, aB: TAU, nu: gp.hole ? 240 : curved ? 64 : 16, nv: gp.hole ? 288 : 96, inset: gi === 0 ? () => info.refR * 0.004 : null, cut: true });
     for (let q = 0; q < gs.pos.length; q += 3) for (let d = 0; d < 3; d++) { gmn[d] = Math.min(gmn[d], gs.pos[q + d]); gmx[d] = Math.max(gmx[d], gs.pos[q + d]); }
     content.add(new T.Mesh(gs.g, new T.MeshLambertMaterial({ color: gi === 0 ? 0x8fa392 : 0x9aaa9d, transparent: true, opacity: gi === 0 ? 0.2 : 0.45, side: T.DoubleSide, depthWrite: false })));
   });
   let mn = [Infinity, Infinity, Infinity], mx = [-Infinity, -Infinity, -Infinity];
   for (let q = 0; q < sf.pos.length; q += 3) for (let d = 0; d < 3; d++) { mn[d] = Math.min(mn[d], sf.pos[q + d]); mx[d] = Math.max(mx[d], sf.pos[q + d]); }
   const scanR = vlen(vsub(mx, mn)) / 2;
-  if (info.feature !== 'pipe') for (let d = 0; d < 3; d++) { mn[d] = Math.min(mn[d], gmn[d]); mx[d] = Math.max(mx[d], gmx[d]); }
-  const center = vmul(vadd(mn, mx), 0.5), radius = Math.max(0.5, vlen(vsub(mx, mn)) / 2);
+  if (info.feature !== 'pipe' && info.feature !== 'neck') for (let d = 0; d < 3; d++) { mn[d] = Math.min(mn[d], gmn[d]); mx[d] = Math.max(mx[d], gmx[d]); }
+  const center = vmul(vadd(mn, mx), 0.5);
+  const radius = Math.max(0.5, info.feature === 'neck' ? scanR * 1.9 : vlen(vsub(mx, mn)) / 2);   // necks: framed on the neck with some run around it
   const lh = Math.max(0.2, Math.min(radius * 0.06, scanR * 0.08));
 
   // Labels: clock positions at the start edge, columns along, rows around, and the minimum.
-  const addLabel = (text, p, color, bg) => { const sp = makeLabel(text, color, bg); sp.position.set(p[0], p[1], p[2]); sp.scale.set(lh * sp.userData.aspect, lh, 1); content.add(sp); return sp; };
+  const addLabel = (text, p, color, bg, size, nrm) => { const h = size || lh, sp = makeLabel(text, color, bg); sp.position.set(p[0], p[1], p[2]); sp.scale.set(h * sp.userData.aspect, h, 1); if (nrm) sp.userData.nrm = nrm; content.add(sp); return sp; };
+  const outN = (sv, a) => vnorm(vsub(part.pos(sv, a, -1), part.pos(sv, a, 0)));   // outward direction at a point
   const sLab = info.neck ? info.sB + lh * 1.3 : info.sA - lh * 1.5;
   for (let q = 0; q < 4; q++) { const a = q * Math.PI / 2; addLabel(clockText(a), part.pos(sLab, a, -lh * 0.9), '#ffffff'); }
   if (M.mode === 'grid') {
-    const nAx = Math.max(2, Math.min(9, Math.floor(M.cols / (lh * 2.6)) + 1));
-    for (let t = 0; t < nAx; t++) { const c = Math.round(t * (M.cols - 1) / (nAx - 1)); addLabel(String(c + 1), part.pos(info.sA + c + 0.5, info.aA, -lh * 0.8), '#cfd8d0'); }
-    const nR = Math.max(2, Math.min(M.rows, 12, Math.floor(M.rows / (lh * 2.4)) + 1));
-    const sRow = info.neck ? info.sA - lh * 0.2 : info.sB + lh * 1.2;
-    for (let t = 0; t < nR; t++) { const r = Math.round(t * (M.rows - 1) / (nR - 1)); addLabel(rowLabel(r), part.pos(sRow, info.aA + (r + 0.5) / M.rows * (info.aB - info.aA), -lh * 0.4), '#cfd8d0'); }
+    // Label every column and row when there is room; otherwise every k-th (always first and last).
+    // Spacing is measured on the actual surface, so reducers, caps and necks get it right too.
+    const step = (gap, size) => Math.max(1, Math.ceil(size / Math.max(gap, 1e-6)));
+    const pick = (n, k) => { const out = []; for (let i = 0; i < n; i += k) out.push(i); if (out[out.length - 1] !== n - 1 && n - 1 - out[out.length - 1] >= k / 2) out.push(n - 1); return out.slice(0, 400); };
+    const lab = lh * 0.85;
+    const sCol = c => info.sA + (c + 0.5) * info.ia;
+    const colGap = M.cols > 1 ? vlen(vsub(part.pos(sCol(1), info.aA, 0), part.pos(sCol(0), info.aA, 0))) : 1;
+    pick(M.cols, step(colGap, lab * 1.9)).forEach(c => addLabel(String(c + 1), part.pos(sCol(c), info.aA, -lh * 0.8), '#cfd8d0', null, lab, outN(sCol(c), info.aA)));
+    // Rows: at the far end of the grid; on a neck, lifted off the neck right at the run so they stay visible.
+    const sRow = info.neck ? info.sA + Math.min(0.25 * info.ia, 0.5) : info.sB + lh * 1.2;
+    const rowOut = info.neck ? -lh * 0.9 : -lh * 0.4;
+    const aRow = r => info.aA + (r + 0.5) / M.rows * (info.aB - info.aA);
+    const rowGap = M.rows > 1 ? vlen(vsub(part.pos(sRow, aRow(1), 0), part.pos(sRow, aRow(0), 0))) : 1;
+    pick(M.rows, step(rowGap, lab * 1.25)).forEach(r => addLabel(rowLabel(r), part.pos(sRow, aRow(r), rowOut), '#cfd8d0', null, lab, outN(Math.min(sRow, info.sB), aRow(r))));
   }
   let minN = null, minA = info.aA;
   if (M.min) {
@@ -1703,7 +1864,7 @@ function v3Build() {
   }
   v3.model = { ...M, part, info, center, radius, minN, minA, lh, lossAt };
   const notes = [featureDesc(state)];
-  if (k > 1) notes.push(`wall loss exaggerated ${k}×`);
+  notes.push('drawn at true OD; wall thickness shown by color');
   $('v3Note').textContent = notes.join(' · ');
 }
 
@@ -1722,7 +1883,8 @@ function v3ResetView() {
   let d = vnorm(vadd(vadd(n, [0, 0.38, 0]), vmul(side, 0.28)));
   if (f === 'elbow' && m.info.bendNormal) { let bn = rot(m.info.bendNormal); if (vdot(bn, n) < 0) bn = vmul(bn, -1); d = vnorm(vadd(vadd(bn, vmul(n, 0.55)), [0, 0.3, 0])); }
   else if (f === 'cap') d = vnorm(vadd(vadd(rot(clockDir(m.minA)), [0.75, 0, 0]), [0, 0.3, 0]));
-  else if (f === 'tee' || f === 'neck') { if (Math.abs(d[1]) > 0.8) d = vnorm(vadd(vmul(d, 0.5), [0, 0, Math.sign(d[2] || 1) * 0.9])); d = vnorm(vadd(d, [0, 0.3, 0])); }
+  else if (f === 'neck') d = vnorm(vadd(vadd(n, vmul(m.info.eB, 0.6)), [0, 0.25, 0]));   // from the low side, angled back toward the run
+  else if (f === 'tee') { if (Math.abs(d[1]) > 0.8) d = vnorm(vadd(vmul(d, 0.5), [0, 0, Math.sign(d[2] || 1) * 0.9])); d = vnorm(vadd(d, [0, 0.3, 0])); }
   v3.theta = Math.atan2(d[0], d[2]); v3.phi = clamp(Math.acos(clamp(d[1], -1, 1)), 0.3, Math.PI - 0.3);
   const fov = v3.camera.fov * Math.PI / 180, asp = v3.camera.aspect || 1;
   v3.dist = m.radius / Math.sin(fov / 2) * (asp < 1 ? 1 / asp : 1) * 0.95;
@@ -1795,7 +1957,7 @@ function v3Info(c) {
   const u = M.u, ul = unitLabel(u);
   if (!c) { info.textContent = M.min ? `Min ${fmt(M.min.v, u)} ${ul} @ ${M.min.loc}${pctTxt(M.min.v)} · tap a cell for its reading` : 'No readings yet'; return; }
   const I = M.info, where = M.mode === 'grid' && I.feature !== 'pipe'
-    ? ` · ${inchTxt(I.sA + (c.c + 0.5))} ${I.neck ? 'above run' : 'from weld'}` : '';
+    ? ` · ${inchTxt(I.sA + (c.c + 0.5) * I.ia)} ${I.neck ? 'above run' : 'from weld'}` : '';
   if (c.v == null) { info.textContent = `${c.loc}${where}: no reading`; return; }
   const nt = notesFor(M.mode)[c.loc];
   info.textContent = `${c.loc}${where}: ${fmt(c.v, u)} ${ul}${pctTxt(c.v)}` + (nt && nt.value === c.v ? ` · Note: ${nt.reason}${nt.text ? ' – ' + nt.text : ''}` : '');
@@ -1835,8 +1997,7 @@ async function v3Save() {
   g.font = `${Math.round(fs * 0.8)}px system-ui, sans-serif`; g.fillStyle = '#cfd8d0';
   g.fillText([featureDesc(s), `${s.od}" OD`, s.nwt ? `NWT ${s.nwt} ${ul}` : '', s.axial ? `Axial ${s.axial}"` : '',
     M.min ? `Min ${fmt(M.min.v, u)} ${ul} @ ${M.min.loc}${pctTxt(M.min.v)}` : ''].filter(Boolean).join(' · '), pad, pad + fs * 2.15);
-  const k = DEPTH_STEPS[+$('v3Depth').value];
-  g.fillText(new Date().toLocaleString() + (k > 1 ? ` · dent depth exaggerated ×${k}` : ' · true scale'), pad, pad + fs * 3.2);
+  g.fillText(new Date().toLocaleString() + ' · drawn at true OD; wall thickness shown by color', pad, pad + fs * 3.2);
   const blob = await new Promise(res => cv.toBlob(res, 'image/png'));
   if (!blob) { toast('Could not create the image.', 'error'); return; }
   const name = `${(s.joint || 'joint').replace(/[^\w.-]/g, '_')}_3D_${stamp()}.png`;
@@ -1853,11 +2014,6 @@ function wire3D() {
   $('v3Close').addEventListener('click', close3D);
   $('v3Reset').addEventListener('click', () => { if (v3 && v3.model) { v3ResetView(); v3Info(null); } });
   $('v3Save').addEventListener('click', v3Save);
-  $('v3Depth').addEventListener('input', () => {
-    const k = DEPTH_STEPS[+$('v3Depth').value];
-    $('v3DepthVal').textContent = k === 1 ? '1× (true scale)' : `${k}× exaggerated`;
-    if (v3 && v3.model) { v3Build(); v3Render(); v3Info(null); }
-  });
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('view3d').hidden) close3D(); });
 }
 
@@ -2000,7 +2156,7 @@ function carryOver(prev, keys) {
 async function saveAndNext() {
   if (!(await saveRecord({ next: true }))) return;
   const prev = state;
-  state = carryOver(prev, [...SESSION_KEYS, 'od', 'units', 'nwt', 'length']);
+  state = carryOver(prev, [...SESSION_KEYS, 'od', 'units', 'nwt', 'length', 'incCirc', 'incAx']);
   state.joint = nextJointName(prev.joint);
   if (state.mode === 'grid' && prev.gridRows) { state.gridRows = prev.gridRows; state.gridCols = prev.gridCols; }
   fillForm();
@@ -2143,7 +2299,8 @@ function csvForRecord(r) {
   ];
   L.push(['Feature', featureDesc(r)]);
   if ((r.feature || 'pipe') !== 'pipe' && num(r.ftStart) > 0) L.push([r.mode === 'grid' ? 'Grid start from weld (in)' : 'Band position from weld (in)', r.ftStart]);
-  if (r.mode === 'grid') L.push(['Circumferential start', r.circ], ['Length (in)', r.length]);
+  if (r.mode === 'grid') L.push(['Circumferential start', r.circ], ['Rows run', r.circDir === 'ccw' ? 'Counter-clockwise' : 'Clockwise'], ['Length (in)', r.length],
+    ['Circ. increment (in)', incOf(r.incCirc)], ['Axial increment (in)', incOf(r.incAx)]);
   L.push(['Inspector', r.inspector], ['Instrument', r.instrument], ['Serial', r.serial], ['Comments', r.comments]);
   if (r.migrationNote) L.push(['Note', r.migrationNote]);
   L.push([]);
@@ -2174,7 +2331,7 @@ function csvForRecord(r) {
 
 function flatCSV(recs) {
   const L = [['record_id','survey_type','joint','od_in','nwt_in','nwt_entered','units','axial_in','circ_start','location','row','column','clock',
-    'reading_entered','reading_in','pct_nominal','flag','note_reason','note_text','inspector','instrument','serial','cal_in','cal_out','velocity','gain','range','comments','updated','units_review','feature']];
+    'reading_entered','reading_in','pct_nominal','flag','note_reason','note_text','inspector','instrument','serial','cal_in','cal_out','velocity','gain','range','comments','updated','units_review','feature','inc_circ_in','inc_axial_in']];
   for (const r of recs) {
     const nIn = nwtInOf(r);
     for (const e of entries(r)) {
@@ -2185,7 +2342,7 @@ function flatCSV(recs) {
         a.level === 2 ? flagReason({ a }, r.units) : a.level === 1 ? 'over 10% vs nominal' : '',
         nt ? nt.reason : '', nt ? nt.text || '' : '',
         r.inspector, r.instrument, r.serial, r.calIn, r.calOut, r.velocity, r.gain, r.range, r.comments,
-        r.updatedAt ? new Date(r.updatedAt).toISOString() : '', r.unitsReview ? 'yes' : '', featureDesc(r)]);
+        r.updatedAt ? new Date(r.updatedAt).toISOString() : '', r.unitsReview ? 'yes' : '', featureDesc(r), r.mode === 'grid' ? incOf(r.incCirc) : '', r.mode === 'grid' ? incOf(r.incAx) : '']);
     }
   }
   return toCSV(L);
@@ -2246,7 +2403,7 @@ function wire() {
       document.querySelectorAll(`[data-field="${key}"]`).forEach(o => { if (o !== el) { o.value = el.value; markFilled(o); } });
       updateCompactSum();
       if (key === 'nwt' || key === 'units') { refreshUnitLabels(); validateNwt(); refreshCells(); updateSummary(); }
-      if (key === 'od' || key === 'length') updateGridHint();
+      if (key === 'od' || key === 'length' || key === 'incCirc' || key === 'incAx') updateGridHint();
       if (key === 'feature' || key === 'ftRedType') updateFeatureUI();
       markDirty();
     });
@@ -2328,6 +2485,7 @@ function wire() {
   $('expandSetup').addEventListener('click', () => { setSetup(false); $('f-joint').scrollIntoView({ block: 'center' }); });
   $('collapseSetup').addEventListener('click', () => setSetup(true));
   wireEntryBar();
+  wireAxisMenu();
   wireReview();
   wire3D();
 
